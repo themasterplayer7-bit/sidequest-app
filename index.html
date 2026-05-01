@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sidequest</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              sidequest: {
+                bg: '#0a0a0a',
+                card: '#111111',
+                border: '#1F1F1F',
+                primary: '#7C3AED',
+                accent: '#F59E0B',
+                text: '#F9FAFB',
+              },
+            },
+            fontFamily: {
+              inter: ['Inter', 'sans-serif'],
+            },
+            borderRadius: {
+              xl2: '16px',
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      body { background:#0a0a0a; }
+      .particle { position:absolute; border-radius:9999px; background: rgba(124,58,237,.28); filter: blur(0.2px); }
+    </style>
+  </head>
+  <body class="font-inter text-sidequest-text min-h-screen">
+    <div id="root"></div>
+
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/framer-motion/dist/framer-motion.js"></script>
+    <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useRef, useState } = React;
+      const { motion, AnimatePresence } = Motion;
+
+      const quests = [
+        { id:1, title:'Der unbekannte Ort', description:'Betritt ein Café in deiner Stadt das du noch nie betreten hast. Bestell etwas das du normalerweise nie nimmst.', category:'Erkundung', icon:'🗺️', difficulty:2, xp:120, time:45, conditions:{weather:'any',time:'any'} },
+        { id:2, title:'Die stille Stunde', description:'Geh raus, setz dich irgendwo hin und schau 20 Minuten lang nur — kein Handy, keine Musik.', category:'Ruhig', icon:'🌙', difficulty:1, xp:80, time:20, conditions:{weather:'any',time:'any'} },
+        { id:3, title:'Der fremde Weg', description:'Nimm auf deinem nächsten Weg eine Route die du noch nie gegangen bist. Egal wohin — einfach links statt rechts.', category:'Abenteuer', icon:'⚔️', difficulty:1, xp:60, time:30, conditions:{weather:'any',time:'any'} },
+        { id:4, title:'Das Gespräch', description:'Ruf jetzt jemanden an den du seit mehr als einem Monat nicht gesprochen hast. Kein Text — nur Anruf.', category:'Sozial', icon:'👥', difficulty:3, xp:200, time:15, conditions:{weather:'any',time:'any'} },
+        { id:5, title:'Das perfekte Foto', description:'Finde in deiner Umgebung etwas Schönes das du noch nie fotografiert hast. Nur natürliches Licht — kein Filter.', category:'Kreativ', icon:'🎨', difficulty:2, xp:100, time:20, conditions:{weather:'sunny',time:'day'} },
+        { id:6, title:'Der Marktbesuch', description:'Geh in einen Laden den du normalerweise nie betrittst. Kauf eine Kleinigkeit die dich interessiert.', category:'Erkundung', icon:'🗺️', difficulty:2, xp:110, time:30, conditions:{weather:'any',time:'day'} },
+        { id:7, title:'Die Blackbox', description:'Geh einfach raus. Keine weiteren Anweisungen. Schau was passiert wenn du einfach anfängst zu laufen.', category:'Wildcard', icon:'⬛', difficulty:5, xp:300, time:60, conditions:{weather:'any',time:'any'} },
+        { id:8, title:'Koch mit 3 Zutaten', description:'Öffne deinen Kühlschrank. Nimm genau 3 Zutaten die du siehst und mach daraus etwas Essbares.', category:'Kreativ', icon:'🎨', difficulty:3, xp:150, time:30, conditions:{weather:'rain',time:'any'} },
+      ];
+
+      const getQuest = (weather, hour, lastId) => {
+        const timeOfDay = hour < 12 ? 'morning' : hour < 18 ? 'day' : 'evening';
+        const eligible = quests.filter((q) =>
+          (q.conditions.weather === 'any' || q.conditions.weather === weather) &&
+          (q.conditions.time === 'any' || q.conditions.time === timeOfDay)
+        );
+        const pool = eligible.length > 1 ? eligible.filter((q) => q.id !== lastId) : eligible;
+        return pool[Math.floor(Math.random() * pool.length)] || quests[0];
+      };
+
+      const getWeather = async (lat, lng) => {
+        const API_KEY = 'YOUR_API_KEY_HERE';
+        const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&appid=${API_KEY}&units=metric&lang=de`);
+        const data = await res.json();
+        return { temp: Math.round(data.main?.temp ?? 18), city: data.name || 'Unbekannt', condition: (data.weather?.[0]?.main || '').toLowerCase().includes('rain') ? 'rain' : 'sunny' };
+      };
+
+      function App() {
+        const [screen, setScreen] = useState('home');
+        const [weather, setWeather] = useState({ city:'Standort wird geladen...', temp:'--', condition:'sunny' });
+        const [quest, setQuest] = useState(null);
+        const [lastQuestId, setLastQuestId] = useState(null);
+        const [xpShown, setXpShown] = useState(0);
+        const shareRef = useRef(null);
+        const particles = useMemo(() => Array.from({length: 16}, (_,i)=>({id:i,left:Math.random()*100,top:Math.random()*100,size:2+Math.random()*4,dur:4+Math.random()*6})), []);
+
+        useEffect(() => {
+          navigator.geolocation?.getCurrentPosition(async ({coords}) => {
+            try { setWeather(await getWeather(coords.latitude, coords.longitude)); }
+            catch { setWeather({ city:'API Key fehlt', temp:'--', condition:'sunny' }); }
+          }, () => setWeather({ city:'Standort blockiert', temp:'--', condition:'sunny' }));
+        }, []);
+
+        const startQuestFlow = async () => {
+          setScreen('loading');
+          await new Promise(r=>setTimeout(r,2000));
+          const next = getQuest(weather.condition, new Date().getHours(), lastQuestId);
+          setQuest(next);
+          setLastQuestId(next.id);
+          setScreen('quest');
+        };
+
+        useEffect(()=>{
+          if(screen==='complete' && quest){
+            setXpShown(0);
+            let start = performance.now();
+            const tick = (t)=>{
+              const p = Math.min((t-start)/1100,1);
+              setXpShown(Math.round(quest.xp*p));
+              if(p<1) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          }
+        },[screen,quest]);
+
+        const shareCard = async () => {
+          if(!shareRef.current) return;
+          const canvas = await html2canvas(shareRef.current, { backgroundColor:'#0a0a0a', scale:2 });
+          const url = canvas.toDataURL('image/png');
+          const a = document.createElement('a');
+          a.href = url; a.download = `sidequest-${quest.id}.png`; a.click();
+        };
+
+        return <div className="min-h-screen bg-sidequest-bg flex justify-center p-3">
+          <div className="relative w-full max-w-[390px] min-h-[95vh] overflow-hidden rounded-xl2 border border-sidequest-border bg-sidequest-bg">
+            {particles.map(p => <motion.span key={p.id} className="particle" style={{left:`${p.left}%`,top:`${p.top}%`,width:p.size,height:p.size}} animate={{y:[0,-14,0],opacity:[0.2,0.6,0.2]}} transition={{repeat:Infinity,duration:p.dur,ease:'easeInOut'}} />)}
+            <AnimatePresence mode="wait">
+              {screen==='home' && <motion.div key="home" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="h-full min-h-[95vh] flex flex-col items-center justify-center text-center px-6">
+                <h1 className="text-4xl font-bold mb-12">Sidequest</h1>
+                <motion.button onClick={startQuestFlow} className="h-[120px] w-[120px] rounded-full bg-sidequest-primary shadow-[0_0_40px_rgba(124,58,237,0.6)]" animate={{scale:[1,1.05,1]}} transition={{repeat:Infinity,duration:2,ease:'easeInOut'}} />
+                <p className="text-gray-400 mt-8">Drück für deine nächste Mission</p>
+                <p className="absolute bottom-8 text-sm text-gray-500">{weather.city} · {weather.temp}°C</p>
+              </motion.div>}
+
+              {screen==='loading' && <motion.div key="loading" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="h-full min-h-[95vh] flex flex-col justify-center px-8">
+                {['Standort erkannt...','Wetter wird geprüft...','Quest wird generiert...'].map((t,i)=><motion.p key={t} initial={{opacity:0}} animate={{opacity:[0,1,1,0]}} transition={{duration:i===2?1:0.5,delay:i===0?0:i===1?0.5:1}} className="text-lg text-gray-200 mb-3">{t}</motion.p>)}
+                <div className="mt-6 h-2 bg-sidequest-border rounded-full overflow-hidden"><motion.div className="h-full bg-sidequest-primary" initial={{width:'0%'}} animate={{width:'100%'}} transition={{duration:2,ease:'easeInOut'}} /></div>
+              </motion.div>}
+
+              {screen==='quest' && quest && <motion.div key="quest" initial={{y:'100%'}} animate={{y:0}} exit={{opacity:0}} transition={{type:'spring',stiffness:120,damping:20}} className="min-h-[95vh] bg-sidequest-card p-5 flex flex-col">
+                <div className="flex justify-between text-sm"><span className="px-3 py-1 rounded-full bg-sidequest-border">{'⭐'.repeat(quest.difficulty)}</span><span className="px-3 py-1 rounded-full bg-amber-500/20 text-sidequest-accent font-semibold">+{quest.xp} XP</span></div>
+                <div className="text-6xl text-center mt-10">{quest.icon}</div>
+                <h2 className="text-[28px] font-extrabold mt-6">{quest.title}</h2>
+                <p className="text-gray-300 mt-3 text-base leading-relaxed">{quest.description}</p>
+                <span className="mt-6 inline-block px-4 py-2 rounded-full bg-sidequest-primary/25 text-sidequest-primary font-semibold">{quest.time} Min</span>
+                <div className="mt-auto space-y-3"><button onClick={()=>setScreen('complete')} className="w-full py-3 bg-sidequest-primary rounded-xl2 font-semibold">Ich mach's ⚔️</button><button onClick={startQuestFlow} className="w-full py-2 border border-sidequest-border rounded-xl2 text-gray-300">Andere Quest</button></div>
+              </motion.div>}
+
+              {screen==='complete' && quest && <motion.div key="complete" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="min-h-[95vh] p-6 flex flex-col">
+                <div className="mt-8 self-center">
+                  <motion.svg width="100" height="100" viewBox="0 0 100 100" initial="hidden" animate="visible">
+                    <motion.path d="M20 52 L42 72 L80 30" stroke="#7C3AED" strokeWidth="8" fill="none" strokeLinecap="round" strokeLinejoin="round" variants={{hidden:{pathLength:0},visible:{pathLength:1}}} transition={{duration:1}} />
+                  </motion.svg>
+                </div>
+                <h2 className="text-3xl font-bold text-center mt-4">Quest abgeschlossen!</h2>
+                <p className="text-center text-sidequest-accent text-2xl font-bold mt-2">+{xpShown} XP</p>
+                <div ref={shareRef} className="mt-8 aspect-square rounded-xl2 border-2 border-sidequest-primary bg-sidequest-bg p-5 flex flex-col justify-between">
+                  <div><p className="text-3xl">{quest.icon}</p><p className="font-bold text-xl mt-2">{quest.title}</p></div>
+                  <p className="text-sm text-gray-400">{weather.city} · {new Date().toLocaleString('de-DE')}</p>
+                  <p className="text-sidequest-accent font-semibold">+{quest.xp} XP</p>
+                  <p className="text-right text-xs text-gray-500">Sidequest</p>
+                </div>
+                <div className="mt-auto space-y-3"><button onClick={shareCard} className="w-full py-3 rounded-xl2 bg-sidequest-accent text-black font-bold">Teilen</button><button onClick={()=>setScreen('home')} className="w-full py-3 rounded-xl2 bg-sidequest-primary font-semibold">Neue Quest</button></div>
+              </motion.div>}
+            </AnimatePresence>
+          </div>
+        </div>;
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+  </body>
+</html>
